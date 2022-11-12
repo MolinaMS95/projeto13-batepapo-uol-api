@@ -10,11 +10,9 @@ const participantSchema = joi.object({
 });
 
 const messageSchema = joi.object({
-  from: joi.string().required(),
-  to: joi.string().required(),
+  to: joi.string().required().min(3).max(20),
   text: joi.string().required(),
-  type: joi.string().required(),
-  time: joi.string().required(),
+  type: joi.string().valid("message", "private_message").required(),
 });
 
 const app = express();
@@ -48,7 +46,7 @@ app.post("/participants", async (req, res) => {
 
   try {
     const userExists = await participantCollection.findOne({
-      name: participant.name,
+      name: { $regex: participant.name, $options: "i" },
     });
     if (userExists) {
       return res.status(409).send({ message: "Esse nome já existe" });
@@ -76,6 +74,36 @@ app.get("/participants", async (req, res) => {
   try {
     const participants = await participantCollection.find().toArray();
     res.status(200).send(participants);
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
+
+app.post("/messages", async (req, res) => {
+  const message = req.body;
+  const from = req.headers.user;
+
+  const { error } = messageSchema.validate(message, { abortEarly: false });
+
+  if (error) {
+    const errors = error.details.map((detail) => detail.message);
+    return res.status(422).send(errors);
+  }
+
+  try {
+    const userExists = await participantCollection.findOne({ name: from });
+
+    if (!userExists) {
+      return res.status(422).send({ message: "Participante não encontrado" });
+    }
+
+    await messageCollection.insertOne({
+      from: from,
+      ...message,
+      time: dayjs().format("HH:mm:ss"),
+    });
+    return res.sendStatus(201);
   } catch (err) {
     console.log(err);
     res.sendStatus(500);
