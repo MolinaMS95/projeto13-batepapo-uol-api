@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import dotenv from "dotenv";
 import joi from "joi";
 import dayjs from "dayjs";
@@ -167,6 +167,77 @@ app.post("/status", async (req, res) => {
   }
 });
 
+app.delete("/messages/:id", async (req, res) => {
+  const user = req.headers.user;
+  const id = req.params.id;
+
+  try {
+    const messageExists = await messageCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!messageExists) {
+      return res.sendStatus(404);
+    } else if (messageExists.from !== user) {
+      return res.sendStatus(401);
+    }
+
+    await messageCollection.deleteOne({ _id: new ObjectId(id) });
+    return res.send("Mensagem apagada com sucesso");
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
+
+app.put("/messages/:id", async (req, res) => {
+  const message = req.body;
+  const from = req.headers.user;
+  const id = req.params.id;
+
+  const { error } = messageSchema.validate(message, { abortEarly: false });
+
+  if (error) {
+    const errors = error.details.map((detail) => detail.message);
+    return res.status(422).send(errors);
+  }
+
+  try {
+    const userExists = await participantCollection.findOne({ name: from });
+
+    if (!userExists) {
+      return res.status(422).send({ message: "Participante não encontrado" });
+    }
+
+    const messageExists = await messageCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!messageExists) {
+      return res.sendStatus(404);
+    } else if (messageExists.from !== from) {
+      return res.sendStatus(401);
+    }
+
+    await messageCollection.updateOne(
+      { _id: messageExists._id },
+      {
+        $set: {
+          from: stripHtml(from).result.trim(),
+          to: stripHtml(message.to).result.trim(),
+          text: stripHtml(message.text).result.trim(),
+          type: stripHtml(message.type).result.trim(),
+          time: dayjs().format("HH:mm:ss"),
+        },
+      }
+    );
+    return res.sendStatus(200);
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
+
 async function inactiveUser() {
   const toMilliseconds = 10 * 1000;
   const treshold = Date.now() - toMilliseconds;
@@ -175,10 +246,16 @@ async function inactiveUser() {
     const inactiveUsers = await participantCollection
       .find({ lastStatus: { $lt: treshold } })
       .toArray();
-    if (inactiveUsers.length != 0) {
+    if (inactiveUsers.length !== 0) {
       const names = inactiveUsers.map((user) => user.name);
       await participantCollection.deleteMany({ name: { $in: names } });
-      const leaveMessages = names.map(user => ({from: user, to: "Todos", text: "sai da sala...", type: "status", time: dayjs().format("HH:mm:ss")}));
+      const leaveMessages = names.map((user) => ({
+        from: user,
+        to: "Todos",
+        text: "sai da sala...",
+        type: "status",
+        time: dayjs().format("HH:mm:ss"),
+      }));
       await messageCollection.insertMany(leaveMessages);
     }
   } catch (err) {
