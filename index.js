@@ -110,4 +110,76 @@ app.post("/messages", async (req, res) => {
   }
 });
 
+app.get("/messages", async (req, res) => {
+  try {
+    const user = req.headers.user;
+    const userExists = await participantCollection.findOne({ name: user });
+
+    if (!userExists) {
+      return res.status(422).send({ message: "Participante não encontrado" });
+    }
+
+    const messages = await messageCollection
+      .find({
+        $or: [
+          { from: user },
+          { to: user },
+          { type: "message" },
+          { type: "status" },
+        ],
+      })
+      .toArray();
+    const orderedMessages = messages.reverse();
+    const limit = parseInt(req.query.limit);
+
+    if (!limit || limit <= 0) {
+      return res.status(200).send(orderedMessages);
+    } else {
+      return res.status(200).send(orderedMessages.slice(0, limit));
+    }
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
+
+app.post("/status", async (req, res) => {
+  try {
+    const user = req.headers.user;
+
+    const userExists = await participantCollection.findOne({ name: user });
+    if (!userExists) {
+      return res.sendStatus(404);
+    }
+
+    await participantCollection.updateOne(
+      { name: user },
+      { $set: { lastStatus: Date.now() } }
+    );
+    return res.sendStatus(200);
+  } catch (err) {
+    console.log(err);
+    res.sendStatus(500);
+  }
+});
+
+async function inactiveUser() {
+  const toMilliseconds = 10 * 1000;
+  const treshold = Date.now() - toMilliseconds;
+
+  try {
+    const inactiveUsers = await participantCollection
+      .find({ lastStatus: { $lt: treshold } })
+      .toArray();
+    if (inactiveUsers.length != 0) {
+      const names = inactiveUsers.map((user) => user.name);
+      await participantCollection.deleteMany({ name: { $in: names } });
+    }
+  } catch (err) {
+    console.log(err);
+  }
+}
+
+setInterval(inactiveUser, 15000);
+
 app.listen(5000);
